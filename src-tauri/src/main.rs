@@ -22,6 +22,7 @@ struct Payload {
 
 fn send_message<R: tauri::Runtime>(handle: &impl Manager<R>, event: &str, payload: Update) {
     handle.emit_all(event, payload).unwrap();
+    
 }
 
 #[derive(Clone, serde::Serialize)]
