@@ -28,6 +28,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.log(event);
     const {
       title,
+      artist,
       thumbnail: {
         content_type,
         data,
@@ -37,6 +38,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     const titleElement: HTMLDivElement | null = document.getElementById(
       "title"
+    ) as HTMLDivElement;
+
+    const artistElement: HTMLDivElement | null = document.getElementById(
+      "artist"
     ) as HTMLDivElement;
 
     console.log(title);
@@ -59,14 +64,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     albumCover.src = contentURL;
     albumCoverBackground.src = contentURL;
     titleElement.textContent = title;
+    artistElement.textContent = artist;
 
     const identifier = {};
     currentTimeout = identifier;
+
+    await appWindow.show();
 
     setTimeout(async () => {
       if (identifier === currentTimeout) {
         await appWindow.hide();
       }
-    }, 100000000);
+    }, 10000);
   });
 });

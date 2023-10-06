@@ -54,6 +54,7 @@ struct Update {
 struct SessionData {
     id: String,
     title: String,
+    artist: String,
     thumbnail: Thumbnail,
 }
 
@@ -121,11 +122,10 @@ async fn get_sessions_data(manager: &GlobalSystemMediaTransportControlsSessionMa
 
         let thumbnail = get_thumbnail(thumbnail_stream, &id)?;
 
-        
-
         let session = SessionData {
             id: id,
             title: session_data.Title()?.to_string(),
+            artist: session_data.Artist()?.to_string(),
             thumbnail: thumbnail,
         };
 
@@ -139,12 +139,18 @@ async fn get_sessions_data(manager: &GlobalSystemMediaTransportControlsSessionMa
 fn hide_native_flyouts() -> Result<(), Box<dyn std::error::Error>> {
     let title = Some("");
 
+    println!("1");
+
     let class_name = Some(AtomStr::from_str("NativeHWNDHost"));
     let h_wnd_host = <HWND as user_Hwnd>::FindWindow(class_name, title)?.unwrap();
+
+    println!("2");
 
     let int_ptr = Some(&HWND::NULL);
     let class_name = AtomStr::from_str("DirectUIHWND");
     let h_wnd_dui = <HWND as user_Hwnd>::FindWindowEx(&h_wnd_host, int_ptr, class_name, title)?.unwrap();
+
+    println!("3");
 
     let minimise = winsafe::co::SW::FORCEMINIMIZE; //let restore = winsafe::co::SW::RESTORE;
 
@@ -155,8 +161,9 @@ fn hide_native_flyouts() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
+    
     hide_native_flyouts()?;
+
 
     let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()?.await?;
     
@@ -168,10 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     tokio::spawn(async move {
 
-        println!("1");
-
         let kb_hook = willhook().unwrap();
-        println!("2");
 
         loop {
             if let Ok(ie) = kb_hook.try_recv() {
@@ -253,6 +257,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    println!("ye");
 
     Ok(())
 
