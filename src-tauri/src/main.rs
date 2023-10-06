@@ -1,12 +1,18 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{ops::RemAssign, collections::HashMap};
-
-use tauri::{Manager, AppHandle};
+use std::{ops::RemAssign, collections::HashMap, io::Cursor};
+use color_thief;
+use tauri::{Manager, AppHandle, WindowBuilder, WindowUrl};
 use tokio::{self, sync::mpsc};
 use windows::{core, Media::Control::{GlobalSystemMediaTransportControlsSessionManager, GlobalSystemMediaTransportControlsSession}, Foundation::TypedEventHandler, Storage::Streams::{IRandomAccessStreamReference, IRandomAccessStreamWithContentType, DataReader}};
 use willhook::willhook;
+use image::io::Reader as ImageReader;
+
+
+use winsafe::{
+    prelude::{user_Hwnd, Handle}, HWND, AtomStr
+};
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
@@ -29,7 +35,12 @@ fn send_message<R: tauri::Runtime>(handle: &impl Manager<R>, event: &str, payloa
 pub enum EventType {
     CurrentSessionChanged,
     VolumeUp,
-    VolumeDown
+    VolumeDown,
+    VolumeMute,
+    Skip,
+    Previous,
+    Stop,
+    PlayPause
 }
 
 
@@ -50,16 +61,31 @@ struct SessionData {
 struct Thumbnail {
     content_type: String,
     data: Vec<u8>,
+    dominant_color: (u8, u8, u8),
 }
 
-fn get_thumbnail(stream: IRandomAccessStreamReference) -> core::Result<Thumbnail> {
+fn get_thumbnail(stream: IRandomAccessStreamReference, process_id: &String) -> Result<Thumbnail, Box<dyn std::error::Error>> {
     let read = stream.OpenReadAsync()?;
     let stream = read.get()?;
     let content_type = stream.ContentType()?.to_string();
-    let data = read_stream(stream)?;
+    let mut data = read_stream(stream)?;
+
+    if process_id == "Spotify.exe" {
+        let mut img = ImageReader::new(Cursor::new(data.clone())).with_guessed_format()?.decode()?;
+
+        let cropped = img.crop(33, 0, 234, 234);
+
+        let mut bytes: Vec<u8> = Vec::new();
+        cropped.write_to(&mut Cursor::new(&mut data), image::ImageOutputFormat::Png)?;
+    }
+
+    let rgb_dominant_color = color_thief::get_palette(&data, color_thief::ColorFormat::Rgb, 5 as u8, 2 as u8)?[0];
+    let dominant_color = (rgb_dominant_color.r, rgb_dominant_color.g, rgb_dominant_color.b);
+
     let thumbnail = Thumbnail {
         content_type: content_type,
         data: data,
+        dominant_color: dominant_color,
     };
     Ok(thumbnail)
 }
@@ -78,7 +104,7 @@ fn read_stream(stream: IRandomAccessStreamWithContentType) -> core::Result<Vec<u
     Ok(data)
 }
 
-async fn get_sessions_data(manager: &GlobalSystemMediaTransportControlsSessionManager) -> core::Result<Vec<SessionData>> {
+async fn get_sessions_data(manager: &GlobalSystemMediaTransportControlsSessionManager) -> Result<Vec<SessionData>, Box<dyn std::error::Error>> {
     let updated: core::Result<Vec<(String, GlobalSystemMediaTransportControlsSession)>> = manager
                         .GetSessions()?
                         .into_iter()
@@ -93,7 +119,9 @@ async fn get_sessions_data(manager: &GlobalSystemMediaTransportControlsSessionMa
         
         let thumbnail_stream = session_data.Thumbnail()?;
 
-        let thumbnail = get_thumbnail(thumbnail_stream)?;
+        let thumbnail = get_thumbnail(thumbnail_stream, &id)?;
+
+        
 
         let session = SessionData {
             id: id,
@@ -108,8 +136,27 @@ async fn get_sessions_data(manager: &GlobalSystemMediaTransportControlsSessionMa
 
 }
 
+fn hide_native_flyouts() -> Result<(), Box<dyn std::error::Error>> {
+    let title = Some("");
+
+    let class_name = Some(AtomStr::from_str("NativeHWNDHost"));
+    let h_wnd_host = <HWND as user_Hwnd>::FindWindow(class_name, title)?.unwrap();
+
+    let int_ptr = Some(&HWND::NULL);
+    let class_name = AtomStr::from_str("DirectUIHWND");
+    let h_wnd_dui = <HWND as user_Hwnd>::FindWindowEx(&h_wnd_host, int_ptr, class_name, title)?.unwrap();
+
+    let minimise = winsafe::co::SW::FORCEMINIMIZE; //let restore = winsafe::co::SW::RESTORE;
+
+    user_Hwnd::ShowWindow(&h_wnd_dui, minimise);
+
+    Ok(())
+}
+
 #[tokio::main]
-async fn main() -> core::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    hide_native_flyouts()?;
 
     let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()?.await?;
     
@@ -142,8 +189,13 @@ async fn main() -> core::Result<()> {
                                     let key = ke.key.unwrap();
 
                                     match key {
+                                        willhook::KeyboardKey::Other(173) => {tx.send(EventType::VolumeMute).ok();}
                                         willhook::KeyboardKey::Other(174) => {tx.send(EventType::VolumeDown).ok();},
                                         willhook::KeyboardKey::Other(175) => {tx.send(EventType::VolumeUp).ok();},
+                                        willhook::KeyboardKey::Other(176) => {tx.send(EventType::Skip).ok();},
+                                        willhook::KeyboardKey::Other(177) => {tx.send(EventType::Previous).ok();},
+                                        willhook::KeyboardKey::Other(178) => {tx.send(EventType::Stop).ok();},
+                                        willhook::KeyboardKey::Other(179) => {tx.send(EventType::PlayPause).ok();},
                                         _ => {}
                                     }
                                 }
@@ -171,6 +223,14 @@ async fn main() -> core::Result<()> {
 
     tauri::Builder::default()
         .setup(|app| {
+
+            /*WindowBuilder::new(app, "core", WindowUrl::App("index.html".into()))
+                .on_navigation(|url| {
+                    // allow the production URL or localhost on dev
+                    url.scheme() == "tauri" || (cfg!(dev) && url.host_str() == Some("localhost"))
+                })
+                .build()?;*/
+
             let app_handle = app.app_handle();
             
             tauri::async_runtime::spawn(async move {
